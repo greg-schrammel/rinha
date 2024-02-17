@@ -7,30 +7,38 @@ type CustomerId = number
 const transaction = type({
   valor: ['integer', '=>', (n) => n >= 0],
   tipo: "'c'|'d'",
-  descricao: '1<string<10',
+  descricao: '0<string<11',
 })
 
 export type Transaction = typeof transaction.infer
 
 async function handleTransaction(customerId: CustomerId, request: Request) {
   const { data: tx, problems } = transaction(await request.json())
-  if (problems) return BadRequest
-  
-  return send(db.transaction(() => {
-    const user = queryUser(customerId)
-    if (!user) throw NotFound
 
-    const newBalance = user.balance - tx.valor
-    if (newBalance < -user.credit) throw UnprocessableEntity
+  if (problems) throw UnprocessableEntity
 
-    updateUser(customerId, user.credit, newBalance)
-    insertTransaction(customerId, tx.valor, tx.tipo, tx.descricao)
+  return send(
+    db.transaction(() => {
+      const user = queryUser(customerId)
+      if (!user) throw NotFound
 
-    return {
-      limite: user.credit,
-      saldo: newBalance,
-    }
-  })())
+      let newBalance = user.balance
+      if (tx.tipo === 'd') {
+        newBalance -= tx.valor
+        if (newBalance < -user.credit) throw UnprocessableEntity
+      } else {
+        newBalance += tx.valor
+      }
+
+      updateUser(customerId, user.credit, newBalance)
+      insertTransaction(customerId, tx.valor, tx.tipo, tx.descricao)
+
+      return {
+        limite: user.credit,
+        saldo: newBalance,
+      }
+    })(),
+  )
 }
 
 function handleStatement(customerId: CustomerId) {
@@ -47,11 +55,11 @@ function handleStatement(customerId: CustomerId) {
           data_extrato: new Date(Date.now()).toISOString(),
           limite: user.credit,
         },
-        ultimas_transacoes: transactions?.map(tx => ({
+        ultimas_transacoes: transactions?.map((tx) => ({
           valor: tx.value,
           tipo: tx.type,
           descricao: tx.description,
-          realizada_em: new Date(tx.timestamp).toISOString()
+          realizada_em: new Date(tx.timestamp).toISOString(),
         })),
       }
     })(),
@@ -77,7 +85,8 @@ export default {
       if (endpoint === 'transacoes' && request.method === 'POST')
         return await handleTransaction(customerId, request)
 
-      if (endpoint == 'extrato' && request.method === 'GET') return await handleStatement(customerId)
+      if (endpoint == 'extrato' && request.method === 'GET')
+        return await handleStatement(customerId)
     } catch (e) {
       if (e instanceof Response) return e
       return BadRequest
