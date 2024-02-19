@@ -1,6 +1,5 @@
 import { type } from 'arktype'
-import { Serve } from 'bun'
-import db, { insertTransaction, queryTransactions, queryUser, updateUser } from 'db'
+import db, { insertTransaction, queryTransactions, queryUser, updateUser } from './db'
 
 type CustomerId = number
 
@@ -13,15 +12,20 @@ const transaction = type({
 export type Transaction = typeof transaction.infer
 
 async function handleTransaction(customerId: CustomerId, request: Request) {
+  const t = Date.now()
+  const p = Date.now()
   const { data: tx, problems } = transaction(await request.json())
+  if (Date.now() - p > 2) console.log('parse tx', Date.now() - p)
 
   if (problems) throw UnprocessableEntity
 
+  const uu = Date.now()
+  const user = queryUser(customerId)
+  if (Date.now() - uu > 2) console.log('query user', Date.now() - uu)
+  if (!user) throw NotFound
+
   return send(
     db.transaction(() => {
-      const user = queryUser(customerId)
-      if (!user) throw NotFound
-
       let newBalance = user.balance
       if (tx.tipo === 'd') {
         newBalance -= tx.valor
@@ -29,9 +33,13 @@ async function handleTransaction(customerId: CustomerId, request: Request) {
       } else {
         newBalance += tx.valor
       }
+      const uu = Date.now()
+      updateUser(customerId, newBalance)
+      if (Date.now() - uu > 2) console.log('update user', Date.now() - uu)
 
-      updateUser(customerId, user.credit, newBalance)
-      insertTransaction(customerId, tx.valor, tx.tipo, tx.descricao)
+      const it = Date.now()
+      insertTransaction(customerId, tx.valor, tx.tipo, tx.descricao, t)
+      if (Date.now() - it > 2) console.log('insert tx', Date.now() - it)
 
       return {
         limite: user.credit,
@@ -42,28 +50,26 @@ async function handleTransaction(customerId: CustomerId, request: Request) {
 }
 
 function handleStatement(customerId: CustomerId) {
-  return send(
-    db.transaction(() => {
-      const user = queryUser(customerId)
-      if (!user) throw NotFound
+  const user = queryUser(customerId)
+  if (!user) throw NotFound
 
-      const transactions = queryTransactions(customerId)
+  const it = Date.now()
+  const transactions = queryTransactions(customerId)
+  if (Date.now() - it > 2) console.log('query tx', Date.now() - it)
 
-      return {
-        saldo: {
-          total: user.balance,
-          data_extrato: new Date(Date.now()).toISOString(),
-          limite: user.credit,
-        },
-        ultimas_transacoes: transactions?.map((tx) => ({
-          valor: tx.value,
-          tipo: tx.type,
-          descricao: tx.description,
-          realizada_em: new Date(tx.timestamp).toISOString(),
-        })),
-      }
-    })(),
-  )
+  return send({
+    saldo: {
+      total: user.balance,
+      data_extrato: new Date(Date.now()).toISOString(),
+      limite: user.credit,
+    },
+    ultimas_transacoes: transactions?.map((tx) => ({
+      valor: tx.value,
+      tipo: tx.type,
+      descricao: tx.description,
+      realizada_em: new Date(tx.timestamp).toISOString(),
+    })),
+  })
 }
 
 const headers = { 'Access-Control-Allow-Origin': '*' }
@@ -72,9 +78,11 @@ const NotFound = new Response(null, { status: 404, headers })
 const UnprocessableEntity = new Response(null, { status: 422, headers })
 const send = (body: object) => new Response(JSON.stringify(body), { status: 200, headers })
 
+console.log('starting at port', process.env.port)
+
 export default {
-  port: 3000,
-  async fetch(request) {
+  port: (process.env.port as unknown as number) || 9999,
+  async fetch(request: Request) {
     const url = new URL(request.url)
 
     const [_, rootPath, _customerId, endpoint] = url.pathname.split('/')
@@ -82,16 +90,23 @@ export default {
     if (rootPath != 'clientes' || !customerId) return NotFound
 
     try {
-      if (endpoint === 'transacoes' && request.method === 'POST')
-        return await handleTransaction(customerId, request)
+      if (endpoint === 'transacoes' && request.method === 'POST') {
+        const a = Date.now()
+        const r = await handleTransaction(customerId, request)
+        if (Date.now() - a > 2) console.log('handleTx', { customerId }, Date.now() - a)
+        return r
+      }
 
-      if (endpoint == 'extrato' && request.method === 'GET')
-        return await handleStatement(customerId)
+      if (endpoint == 'extrato' && request.method === 'GET') {
+        const r = await handleStatement(customerId)
+        return r
+      }
     } catch (e) {
       if (e instanceof Response) return e
+      console.log('error: ', e)
       return BadRequest
     }
 
     return NotFound
   },
-} satisfies Serve
+} //satisfies Serve
