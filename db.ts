@@ -1,24 +1,47 @@
 import { Database } from 'bun:sqlite'
 
-console.log(`creating db`)
+// const db = new Database('/usr/src/db/rinha', { create: true })
+const db = new Database('rinha', { create: true })
 
-// const db = new Database('/usr/src/db', { create: true })
-const db = new Database('', { create: true })
+db.run('PRAGMA busy_timeout = 100;')
+db.run('PRAGMA journal_mode = wal;')
 
-try {
-  db.exec('PRAGMA journal_mode = wal2;')
-  db.prepare('DELETE FROM users;').run()
-  db.prepare('DELETE FROM transactions;').run()
-} catch {}
+function setup() {
+  console.log(`init db setup`)
 
-try {
-  db.query(
+  // db.run('DELETE FROM users;')
+  // db.run('DELETE FROM transactions;')
+
+  db.run(
     `CREATE TABLE IF NOT EXISTS users (userId INTEGER PRIMARY KEY, credit INTEGER, balance INTEGER);`,
-  ).run()
-  db.query(
-    `CREATE TABLE IF NOT EXISTS transactions (userId REFERENCES users(userId), value INTEGER, type TEXT, description TEXT, timestamp DATETIME DEFAULT(STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW')), txId INTEGER PRIMARY KEY);`,
-  ).run()
-} catch {}
+  )
+  db.run(
+    `CREATE TABLE IF NOT EXISTS transactions (userId INTEGER, value INTEGER, type TEXT, description TEXT, timestamp DATETIME DEFAULT(STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW')), txId INTEGER PRIMARY KEY);`,
+  )
+
+  console.log(`inserting users`)
+
+  const insertUser = db.prepare(
+    'INSERT INTO users (userId, credit, balance) VALUES ($id, $credit, $balance)',
+  )
+  const insertUsers = db.transaction((users) => {
+    for (const user of users) insertUser.run(user)
+    return users.length
+  })
+  const usersCount = insertUsers([
+    { $id: 1, $credit: 100000, $balance: 0 },
+    { $id: 2, $credit: 80000, $balance: 0 },
+    { $id: 3, $credit: 1000000, $balance: 0 },
+    { $id: 4, $credit: 10000000, $balance: 0 },
+    { $id: 5, $credit: 500000, $balance: 0 },
+  ])
+
+  console.log(`succesfully inserted ${usersCount} users`)
+
+  console.log(`db setup is done`)
+}
+
+if (process.env.port === '3000') setup()
 
 type User = {
   userId: number
@@ -66,26 +89,3 @@ export const insertTransaction = (
   })
 
 export default db
-
-try {
-  if (!queryUser(1)) {
-    console.log(`inserting users`)
-
-    const insertUser = db.prepare(
-      'INSERT INTO users (userId, credit, balance) VALUES ($id, $credit, $balance)',
-    )
-    const insertUsers = db.transaction((users) => {
-      for (const user of users) insertUser.run(user)
-      return users.length
-    })
-    const usersCount = insertUsers([
-      { $id: 1, $credit: 100000, $balance: 0 },
-      { $id: 2, $credit: 80000, $balance: 0 },
-      { $id: 3, $credit: 1000000, $balance: 0 },
-      { $id: 4, $credit: 10000000, $balance: 0 },
-      { $id: 5, $credit: 500000, $balance: 0 },
-    ])
-
-    console.log(`succesfully inserted ${usersCount} users`)
-  }
-} catch {}

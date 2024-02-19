@@ -1,0 +1,13 @@
+{
+  "name": "load-balancer",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "bun load-balancer.ts"
+  },
+  "devDependencies": {
+    "bun-types": "^1.0.3",
+    "typescript": "^5.1.6"
+  }
+}
